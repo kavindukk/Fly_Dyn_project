@@ -349,12 +349,91 @@ void MultiRotorForcesAndMoments::UpdateForcesAndMoments()
   ESC_signal_ = nh_->advertise<geometry_msgs::Quaternion>("ESC_signal", 10); //ESC signal can be checked from ESC_signal topic
   ESC_signal_.publish(ESC_signal);
 
+  // Eta_dot publisher Right handed coordinate frame
+  geometry_msgs::Vector3 eta_dot;
+  eta_dot.x = GZ_COMPAT_GET_X(C_linear_velocity_W_C);
+  eta_dot.y = GZ_COMPAT_GET_Y(C_linear_velocity_W_C);
+  eta_dot.z = GZ_COMPAT_GET_Z(C_linear_velocity_W_C);
+
+  State_publisher_ = nh_->advertise<geometry_msgs::Vector3>("eta_dot",10); //Eta_dot value can be checked from eta_dot topic
+  State_publisher_.publish(eta_dot);
+
+  // V_dot calculation 
+  Eigen::Matrix<double, 3,3> R;
+  double phi_r = GZ_COMPAT_GET_X(euler_angles);
+  double theta_r = GZ_COMPAT_GET_Y(euler_angles);
+  double psi_r = GZ_COMPAT_GET_Z(euler_angles);
+  R<< (c(psi_r)*c(theta_r)-s(phi_r)*s(psi_r)*s(theta_r)), -c(phi_r)*s(psi_r), (c(psi_r)*s(-theta_r)+c(theta_r)*s(phi_r)*s(psi_r)),
+          (c(theta_r)*s(psi_r)+c(psi_r)*s(phi_r)*s(theta_r)), c(phi_r)*c(psi_r), (s(psi_r)*s(theta_r) - c(psi_r)*c(theta_r)*s(psi_r)),
+          (-c(phi_r)*s(theta_r)), s(phi_r), c(phi_r)*c(theta_r);
+
+  Eigen::Matrix<double, 3,1> weight;
+  double g = nh_motor_.param<double>("gravity", 9.81);
+  double mass_ = nh_private_.param<double>("mass", 3.856);
+  weight<< 0,0,g;
+  Eigen::Matrix<double, 3,1> Force_body;
+  Force_body<< 0,0, applied_forces_.Fz;
+
+  Eigen::MatrixXd V_dot;
+  V_dot = weight + R*Force_body/mass_ ;
+  geometry_msgs::Vector3 V_dot_;
+  V_dot_.x = V_dot(0,0);
+  V_dot_.y = V_dot(1,0);
+  V_dot_.z = V_dot(2,0);
+
+  State_publisher_ = nh_->advertise<geometry_msgs::Vector3>("V_dot",10);
+  State_publisher_.publish(V_dot_);
+
+  // R_dot Calculation
+  Eigen::Matrix<double,3,3> Omega_X;
+  double p_ = GZ_COMPAT_GET_X(C_angular_velocity_W_C);
+  double q_ = GZ_COMPAT_GET_Y(C_angular_velocity_W_C);
+  double r_ = GZ_COMPAT_GET_Z(C_angular_velocity_W_C);
+
+  Omega_X<< 0, r_, -q_,
+            -r_, 0, p_,
+            q_, -p_, 0;
+
+  Eigen::Matrix<double,3,3> R_dot;
+  R_dot = R*Omega_X;
+
+  // Omega_Dot calculation
+  Eigen::Matrix<double,3,3> Inertia_Matrix;
+  double Ixx = nh_motor_.param<double>("Ixx",0.004856);
+  double Iyy = nh_motor_.param<double>("Iyy",0.004856);
+  double Izz = nh_motor_.param<double>("Izz",0.008801);
+  Inertia_Matrix<< Ixx, 0, 0,
+                  0, Iyy, 0,
+                  0, 0, Izz;
+  Eigen::Matrix<double,3,1> Omega;
+  Omega<< p_,q_,r_;
+
+  Eigen::MatrixXd I_Omega = Inertia_Matrix*Omega;
+
+  Eigen::Matrix<double,3,1> Torque;
+  Torque<< applied_forces_.l, applied_forces_.m, applied_forces_.n;
+
+  Eigen::Matrix<double,3,1> Om_X_IOm;
+  Om_X_IOm<< Omega(1,0)*I_Omega(2,0) - I_Omega(1,0)*Omega(2,0),
+            -(Omega(0,0)*I_Omega(2,0) - Omega(2,0)*I_Omega(0,0)),
+            Omega(0,0)*I_Omega(1,0) - Omega(1,0)*I_Omega(0,0);
+
+  Eigen::MatrixXd Omega_Dot;
+  Omega_Dot = Inertia_Matrix.inverse()*(-Om_X_IOm + Torque);
+
+  geometry_msgs::Vector3 Omega_Dot_;
+  Omega_Dot_.x = Omega_Dot(0,0);
+  Omega_Dot_.y = Omega_Dot(1,0);
+  Omega_Dot_.z = Omega_Dot(2,0);
+
+  State_publisher_ = nh_->advertise<geometry_msgs::Vector3>("Omega_Dot",10);
+  State_publisher_.publish(Omega_Dot_);
   // std::cout<<"Om_1: "<<sqrt(angular_speeds(0,0))<<" Om_2: "<<sqrt(angular_speeds(1,0))<<" Om_3: "<<sqrt(angular_speeds(2,0))<<" Om_4: "<<sqrt(angular_speeds(3,0))<<std::endl;
 
-  Eigen::Matrix<double, 3,3> R;
-  R<< (c(-psi)*c(-theta)-s(phi)*s(-psi)*s(-theta)), -c(phi)*s(phi), (c(-psi)*s(-theta)+c(-theta)*s(phi)*s(-psi)),
-          (c(-theta)*s(-psi)+c(-psi)*s(phi)*s(-theta)), c(phi)*c(-psi), (s(-psi)*s(-theta) - c(-psi)*c(-theta)*s(-psi)),
-          (-c(phi)*s(-theta)), s(phi), c(phi)*c(-theta);    
+  // Eigen::Matrix<double, 3,3> R;
+  // R<< (c(-psi)*c(-theta)-s(phi)*s(-psi)*s(-theta)), -c(phi)*s(phi), (c(-psi)*s(-theta)+c(-theta)*s(phi)*s(-psi)),
+  //         (c(-theta)*s(-psi)+c(-psi)*s(phi)*s(-theta)), c(phi)*c(-psi), (s(-psi)*s(-theta) - c(-psi)*c(-theta)*s(-psi)),
+  //         (-c(phi)*s(-theta)), s(phi), c(phi)*c(-theta);    
 
    //#############################################
   actual_forces_.Fx = -1.0*linear_mu_*ur;

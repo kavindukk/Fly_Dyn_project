@@ -139,6 +139,7 @@ private:
   ros::Publisher attitude_pub_;
   ros::Publisher motor_speed_;
   ros::Publisher ESC_signal_;
+  ros::Publisher State_publisher_;
 
   boost::thread callback_queue_thread_;
   void QueueThread();
